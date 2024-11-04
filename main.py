@@ -25,23 +25,60 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = await update.message.reply_text(f"Fetching live price for {symbol}...")
     
+    update_interval = 5  # Update every 5 seconds
+    
     try:
-        for _ in range(60):  # Update for 1 minute (60 seconds)
-            price = get_price.latest_prices[symbol]
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=message.message_id,
-                text=f"The current price of {symbol} is: ${price:.2f}"
-            )
-            await asyncio.sleep(1)  # Wait for 1 second before next update
-    except Exception as e:
-        print(f"Error updating price: {e}")
-    finally:
+        while True:
+            price = float(get_price.latest_prices.get(symbol, 0))
+            if price == 0:
+                await context.bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=message.message_id,
+                    text=f"Waiting for price data for {symbol}..."
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=message.message_id,
+                    text=f"The current price of {symbol} is: ${price:.2f}\nUpdating every {update_interval} seconds. Send any command to stop."
+                )
+            await asyncio.sleep(update_interval)
+    except asyncio.CancelledError:
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=message.message_id,
-            text=f"Final price update for {symbol}: ${get_price.latest_prices[symbol]:.2f}"
+            text=f"Price updates for {symbol} have been stopped."
         )
+    except Exception as e:
+        print(f"Error updating price: {e}")
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=message.message_id,
+            text=f"An error occurred while updating the price for {symbol}. Please try again later."
+        )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Cancel any ongoing price update tasks
+    for task in context.chat_data.get('price_tasks', []):
+        task.cancel()
+    context.chat_data['price_tasks'] = []
+
+    message_type: str = update.message.chat.type
+    text: str = update.message.text
+    
+    print(f'User ({update.message.chat.id}) in ({message_type}): "{text}"')
+    
+    if message_type == 'group':
+        if BOT_USERNAME in text:
+            new_text: str = text.replace(BOT_USERNAME, '').strip()
+            response: str = handle_response(new_text)
+        else:
+            return
+    else:
+        response: str = handle_response(text)
+        
+    print('BOT:', response)
+    await update.message.reply_text(response)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_type: str = update.message.chat.type
@@ -91,8 +128,8 @@ if __name__ == "__main__":
     app.add_error_handler(error)
     
     # Start WebSocket connection
-    symbols = ["btcusdt", "ethusdt", "dogeusdt"]  # Add more symbols as needed
-    get_price.start_websocket(symbols)
+    symbols = ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "SOLUSDT"]  # Add more symbols as needed
+    get_price.init_websocket(symbols)
     
     # Polls the Bot
     print("Polling...")
